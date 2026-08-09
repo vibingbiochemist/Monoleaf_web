@@ -1,0 +1,140 @@
+# CI for Monoleaf Web. Pure TypeScript/Vite/Vitest, no native toolchain, so
+# unlike the desktop app's gate.yml/build.yml split there is no slow Rust half
+# to keep separate: one job, matrixed, running everything a change has to pass.
+#
+# Actions are pinned to full commit SHAs, not tags: a tag is mutable, so a
+# retagged action would run in CI with whatever permissions its job holds. The
+# pins below are the ones already verified in the vibingbiochemist/Monoleaf
+# desktop-app repo's own CI, reused here for consistency across the family of
+# repos rather than re-resolved from scratch. Refresh with, e.g.:
+#   gh api repos/actions/checkout/git/ref/tags/v4 --jq .object.sha
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded runs on the same branch are pointless: pushing twice to a PR
+# should leave one run, not two. Never cancels a run on main, which is the one
+# whose result gets recorded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Full os x Node matrix on every push to main and on manual dispatch. A pull
+  # request runs Ubuntu only, for fast review feedback; the full matrix still
+  # runs immediately on merge, so a Windows- or macOS-only breakage surfaces
+  # within minutes rather than at the next unrelated PR that happens to need
+  # it. This mirrors the desktop app's PR-vs-main build matrix, though the
+  # reason here is turnaround time rather than billed minutes, since Actions
+  # minutes are free on a public repository either way.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') }}
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+
+  # Dev-only advisories do not ship, so this scopes to production dependencies
+  # only: it exists to fail the day one lands in the bundle a visitor actually
+  # loads.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+
+  # THIRD_PARTY_LICENSES.md is generated, never hand-edited (see
+  # scripts/generate-licenses.mjs). This regenerates it in CI and asserts the
+  # committed copy matches, which is what catches someone editing the
+  # disclosure by hand instead of the script that owns it.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run licenses
+      - run: |
+          git diff --exit-code -- THIRD_PARTY_LICENSES.md || {
+            echo
+            echo "THIRD_PARTY_LICENSES.md is out of date. Run 'npm run licenses' locally and commit the result."
+            exit 1
+          }
+
+  # Flags a PR that introduces a dependency with a known vulnerability or an
+  # incompatible licence, at review time rather than after merge. The API
+  # behind it needs a public repo (or Advanced Security on a private one).
+  dependency-review:
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4 branch head, resolved 2026-08-04
+        with:
+          fail-on-severity: high
+
+  # Publishes dist/ (built fresh, not reused from the test matrix, so this is
+  # exactly what `npm run build` produces from this commit) to GitHub Pages at
+  # web.monoleaf.org. Gated on the full test matrix passing, and on push to
+  # main only, never on a PR. Uses GitHub's own OIDC-based Pages deploy, so no
+  # hosting credentials of any kind live in this repo, unlike the website
+  # repo's rsync/SSH deploy.
+  #
+  # public/CNAME (copied verbatim into dist/ by Vite) is what keeps the custom
+  # domain attached across every redeploy — GitHub Pages reads it from the
+  # published content itself, not from a one-time UI setting.
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: dist
+      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        id: deployment

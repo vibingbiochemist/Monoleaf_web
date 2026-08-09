@@ -1,0 +1,47 @@
+# Static analysis with CodeQL over the whole TypeScript frontend, all of
+# which handles untrusted input in this app: pasted HTML, clipboard content,
+# and the rendered markup that goes into the live DOM and into exported
+# files. Same setup as the desktop app's own codeql.yml.
+#
+# Code scanning is free on public repositories but needs GitHub Advanced
+# Security on private ones, so the job is guarded on visibility as a
+# defensive default, though this repository is public today.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload results to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # The default suite plus lower-confidence security queries. This
+          # codebase renders untrusted HTML, so extra XSS and injection
+          # findings are worth triaging even at some false-positive cost.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
+        with:
+          category: "/language:${{ matrix.language }}"
