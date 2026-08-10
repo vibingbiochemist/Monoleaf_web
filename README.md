@@ -23,6 +23,15 @@ It is a separate, standalone project on purpose, not a page bolted onto
 builds to a self-contained bundle that the website can embed, and that any
 other site could embed the same way.
 
+## Versioning
+
+`package.json`'s version tracks the desktop app's, not this repo's own change
+history: it is bumped when the shared editor code here is re-synced from a
+`Monoleaf` release, not for changes local to this repo (a platform-adapter
+fix, a UI tweak like the toolbar logo). The two numbers meaning the same
+thing is the point, since this is the same editor, not a separate product
+with its own roadmap. Displayed in-app under the ⓘ button.
+
 ## Privacy
 
 - **No cookies, no account, no server.** This is a static page; there is

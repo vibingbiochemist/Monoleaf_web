@@ -1,7 +1,7 @@
 {
   "name": "monoleaf-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Monoleaf, in the browser. A portable, single-file markdown editor with no install and no server.",
   "license": "MIT",
   "author": "vibingbiochemist <info@monoleaf.org>",
