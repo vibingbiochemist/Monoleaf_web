@@ -1,0 +1,9 @@
+# Build output & vendored/generated files
+dist
+node_modules
+patches
+package-lock.json
+
+# Markdown is left to the author's own wrapping (README, generated licence
+# disclosure), matching the desktop app's own convention.
+**/*.md

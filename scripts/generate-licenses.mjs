@@ -19,7 +19,13 @@ for (const [name, info] of Object.entries(packages)) {
   if (info.repository) body += `Repository: ${info.repository}\n`;
   body += "\n";
   if (info.licenseFile && existsSync(info.licenseFile)) {
-    const text = readFileSync(info.licenseFile, "utf8").trim();
+    // A dependency's own LICENSE file can carry CRLF depending on the install
+    // environment (verified: domino's does on a Windows install but not on
+    // Linux), which would otherwise make this generator's output differ byte
+    // for byte between machines even with an identical package-lock.json.
+    const text = readFileSync(info.licenseFile, "utf8")
+      .replace(/\r\n/g, "\n")
+      .trim();
     body += "```\n" + text + "\n```\n\n";
   }
 }
