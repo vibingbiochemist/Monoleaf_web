@@ -152,8 +152,11 @@ html.theme-dark .brand-dark {
 }
 
 /* Row 1: File, the Edit/Insert/Review tab switch, and app tools.
-   Row 2: the tools of the selected tab. */
+   Row 2: the tools of the selected tab. Relative so .toolbar-brand below can
+   center itself on the row regardless of how wide the flex content either
+   side of it is. */
 .toolbar-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -165,6 +168,41 @@ html.theme-dark .brand-dark {
 
 .toolbar-spacer {
   flex: 1;
+}
+
+/* The monoleaf.org link, centered on row 1 independent of the flex flow
+   either side of it (File/tabs on the left, tool icons on the right), so it
+   stays visually centered as either side's width changes. Hidden below a
+   width where it would start overlapping those controls, since this toolbar
+   has no overflow/collapse behavior of its own the way the ribbon panels do. */
+.toolbar-brand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  line-height: 0;
+}
+.toolbar-brand .brand-logo {
+  height: 20px;
+  width: auto;
+  display: block;
+}
+.toolbar-brand .brand-dark {
+  display: none;
+}
+html.theme-dark .toolbar-brand .brand-light {
+  display: none;
+}
+html.theme-dark .toolbar-brand .brand-dark {
+  display: block;
+}
+@media (max-width: 640px) {
+  .toolbar-brand {
+    display: none;
+  }
 }
 
 .toolbar-group {
