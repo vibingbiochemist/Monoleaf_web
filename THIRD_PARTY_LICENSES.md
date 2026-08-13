@@ -1593,7 +1593,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## argparse@2.0.1
+## argparse@3.0.0
 
 License: Python-2.0
 Repository: https://github.com/nodeca/argparse
@@ -2255,7 +2255,7 @@ Apache License
    limitations under the License.
 ```
 
-## entities@4.5.0
+## entities@8.0.0
 
 License: BSD-2-Clause
 Repository: https://github.com/fb55/entities
@@ -2488,7 +2488,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## linkify-it@5.0.2
+## linkify-it@6.1.0
 
 License: MIT
 Repository: https://github.com/markdown-it/linkify-it
@@ -2629,7 +2629,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## markdown-it@14.3.0
+## markdown-it@15.0.0
 
 License: MIT
 Repository: https://github.com/markdown-it/markdown-it
@@ -3088,7 +3088,7 @@ OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## uc.micro@2.1.0
+## uc.micro@3.0.0
 
 License: MIT
 Repository: https://github.com/markdown-it/uc.micro
