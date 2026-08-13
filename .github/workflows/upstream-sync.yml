@@ -1,0 +1,87 @@
+# Receives the repository_dispatch sent by Monoleaf's notify-web-port.yml
+# when a push to Monoleaf's main touches one of the src/*.ts files this repo
+# copies verbatim from it. Copies over exactly the files named in the
+# dispatch payload and opens a PR — this repo's own ci.yml then runs on that
+# PR like any other, which is the actual correctness gate. This workflow's
+# job is only to save someone the manual copy-paste, not to vouch for the
+# change.
+#
+# SHARED_FILES here must match Monoleaf's copy in notify-web-port.yml — see
+# the comment there. If a file is renamed or newly shared, update both lists.
+name: upstream-sync
+
+on:
+  repository_dispatch:
+    types: [upstream-shared-file-change]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      # Monoleaf is public, so this needs no credentials — a plain fetch by
+      # commit SHA is enough to read the file contents at that commit.
+      - name: Fetch the upstream commit
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+        run: git fetch --depth 1 https://github.com/vibingbiochemist/Monoleaf "$SHA"
+
+      - name: Copy changed files and open a PR if anything actually differs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.client_payload.sha }}
+          FILES: ${{ join(github.event.client_payload.files, '\n') }}
+        run: |
+          BRANCH="sync/upstream-${SHA:0:7}"
+          git checkout -b "$BRANCH"
+
+          CHANGED=()
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if ! git show "$SHA:$f" > "$f.upstream" 2>/dev/null; then
+              echo "::warning::$f listed in dispatch but not found at $SHA upstream, skipping"
+              continue
+            fi
+            if cmp -s "$f" "$f.upstream"; then
+              rm "$f.upstream"
+            else
+              mv "$f.upstream" "$f"
+              CHANGED+=("$f")
+            fi
+          done <<< "$FILES"
+
+          if [ "${#CHANGED[@]}" -eq 0 ]; then
+            echo "Nothing to sync — Monoleaf_web already matches upstream."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${CHANGED[@]}"
+          git commit -m "Sync shared editor logic from Monoleaf@${SHA:0:7}"
+          git push origin "$BRANCH"
+
+          {
+            echo "Upstream commit: https://github.com/vibingbiochemist/Monoleaf/commit/$SHA"
+            echo
+            echo "Files carried over verbatim:"
+            printf -- '- %s\n' "${CHANGED[@]}"
+            echo
+            echo "CI on this PR is the actual check; merge once it's green."
+          } > pr-body.txt
+
+          gh pr create \
+            --title "Sync shared editor logic from Monoleaf@${SHA:0:7}" \
+            --body-file pr-body.txt \
+            --base main --head "$BRANCH"
