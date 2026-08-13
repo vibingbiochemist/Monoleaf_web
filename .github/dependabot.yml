@@ -1,0 +1,35 @@
+# Mirrors the desktop app's dependabot.yml (vibingbiochemist/Monoleaf), minus
+# the cargo ecosystem: this repo has no src-tauri, it's pure TypeScript/Vite.
+# The npm audit step in ci.yml catches what's already public; Dependabot opens
+# the PR that fixes it.
+#
+# Minor and patch bumps arrive grouped into one PR per ecosystem to keep the
+# noise down; majors stay separate because they need individual review, same
+# as export.ts needed a follow-up fix when the desktop app bumped markdown-it
+# 14 -> 15.
+#
+# Limit is 3, not GitHub's default of 5: Dependabot's first scan happens the
+# moment this file lands, not on the weekly schedule, so two ecosystems at 5
+# each could still open up to ten PRs at once on the first run. 3 keeps that
+# burst survivable while this settles.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    # The action pins would otherwise arrive as separate pull requests, each
+    # running the whole gate.
+    groups:
+      actions-all:
+        patterns: ["*"]
