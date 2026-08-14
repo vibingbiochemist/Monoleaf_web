@@ -34,12 +34,17 @@ jobs:
   # it. This mirrors the desktop app's PR-vs-main build matrix, though the
   # reason here is turnaround time rather than billed minutes, since Actions
   # minutes are free on a public repository either way.
+  #
+  # Node 20 dropped 2026-08-14: it reached End-of-Life 2026-04-30, and jsdom
+  # 30's undici dependency requires Node >=22.19.0 outright, so there is no
+  # version of jsdom this project can take that still runs on it. 22 and 24
+  # are the two lines actually still maintained upstream.
   test:
     strategy:
       fail-fast: false
       matrix:
         os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') }}
-        node: [20, 22]
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
