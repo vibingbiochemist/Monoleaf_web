@@ -1047,6 +1047,7 @@ function pageSetup() {
           setPageConfigSpec(view.state, {
             size: pageSize.value === "Letter" ? "Letter" : "A4",
             margin,
+            font: cfg.font,
             header: pageHeader.value,
             footer: pageFooter.value,
             justify: pageJustify.checked,
