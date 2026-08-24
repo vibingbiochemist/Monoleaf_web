@@ -3,7 +3,7 @@ import taskLists from "markdown-it-task-lists";
 import sub from "markdown-it-sub";
 import sup from "markdown-it-sup";
 import footnotePlugin from "markdown-it-footnote";
-import katexPlugin from "@vscode/markdown-it-katex";
+import katexPluginImport from "@vscode/markdown-it-katex";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
@@ -20,6 +20,26 @@ import { PortabilityMode } from "./portability";
 import { ADMONITIONS, admonitionKind } from "./admonitions";
 import { isRemoteUrl, remoteImagesAllowed } from "./remoteimages";
 import { escapeDashes } from "./htmlcomment";
+import {
+  DEFAULT_FONT_ID,
+  fontStack,
+  isFontId,
+  KNOWN_FAMILIES,
+  MONO_STACK,
+} from "./fonts";
+
+// Vite's dependency pre-bundler has, at least once, mis-handled this
+// package's CJS default export — handing back the whole
+// `{ __esModule, default }` exports object instead of unwrapping to the
+// plugin function itself, so `md.use(katexPlugin, ...)` threw "plugin.apply
+// is not a function" in the dev server (never in Vitest, which doesn't go
+// through that bundling path). Normalizing here is robust to the bundler's
+// interop rather than depending on it.
+const katexPlugin: typeof katexPluginImport =
+  typeof katexPluginImport === "function"
+    ? katexPluginImport
+    : (katexPluginImport as unknown as { default: typeof katexPluginImport })
+        .default;
 
 // Curated language set for fenced-code highlighting in the PDF (core + these
 // keeps the bundle lean). registerLanguage also registers each language's
@@ -121,6 +141,9 @@ function highlightCode(code: string, lang: string): string {
 export interface PageConfig {
   size: "A4" | "Letter";
   margin: string;
+  /** Document font id — see ./fonts.DOCUMENT_FONTS. Bundled, not a system
+   * font name, so the document renders and paginates the same everywhere. */
+  font: string;
   header: string;
   footer: string;
   /** Justify body text document-wide (Blocksatz). */
@@ -130,6 +153,7 @@ export interface PageConfig {
 export const DEFAULT_PAGE_CONFIG: PageConfig = {
   size: "A4",
   margin: "20mm",
+  font: DEFAULT_FONT_ID,
   header: "",
   footer: "{page} / {pages}",
   justify: false,
@@ -210,6 +234,10 @@ export function parsePageConfig(text: string): PageConfig {
         typeof data.margin === "string" && MARGIN_RE.test(data.margin)
           ? data.margin
           : DEFAULT_PAGE_CONFIG.margin,
+      // The family reaches buildPrintCss's stylesheet unescaped (see
+      // fontStack), so this is a security boundary, not just a default: only
+      // a bundled font id may pass, exactly like the margin check above.
+      font: isFontId(data.font) ? data.font : DEFAULT_PAGE_CONFIG.font,
       header:
         typeof data.header === "string"
           ? data.header
@@ -423,6 +451,11 @@ export function renderDocumentHtml(
       for (const token of state.tokens) {
         if (token.map !== null && token.block) {
           token.attrSet("data-srcline", String(token.map[0]));
+          // token.map is [startLine, endLine) — end exclusive. Lets
+          // extractPageBreaks (pagination.ts) anchor a page break to where a
+          // straddling block ENDS when Paged.js clones its stale start-line
+          // data-srcline onto the continuation fragment on the next page.
+          token.attrSet("data-srcline-end", String(token.map[1]));
         }
       }
     });
@@ -435,12 +468,14 @@ export function renderDocumentHtml(
 
 // Screen typography for the exported file. Everything else that must render —
 // table borders, code colours, callout boxes — already carries inline styles
-// from renderDocumentHtml, and math is native MathML, so the file needs no
+// from renderDocumentHtml, and math is native MathML, so beyond the document
+// font (optionally embedded, see EmbeddedFontFace below) the file needs no
 // external stylesheet, fonts, or scripts: it opens and prints anywhere.
-const STANDALONE_CSS = `:root { color-scheme: light dark; }
+function standaloneCss(bodyFontFamily: string): string {
+  return `:root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body {
-  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-family: ${bodyFontFamily};
   max-width: 46rem; margin: 2.5rem auto; padding: 0 1.25rem;
   line-height: 1.65; font-size: 16px; color: #1f2328; background: #ffffff;
 }
@@ -451,7 +486,7 @@ h3 { font-size: 1.25em; }
 p { margin: 0.8em 0; }
 a { color: #0969da; text-decoration: none; }
 a:hover { text-decoration: underline; }
-code { font-family: Consolas, "Cascadia Mono", monospace; background: #eff1f3; padding: 0.15em 0.35em; border-radius: 4px; font-size: 0.9em; }
+code { font-family: ${MONO_STACK}; background: #eff1f3; padding: 0.15em 0.35em; border-radius: 4px; font-size: 0.9em; }
 pre { background: #f6f8fa; padding: 12px 14px; border-radius: 6px; overflow: auto; }
 pre code { background: none; padding: 0; font-size: 0.88em; }
 blockquote { margin: 1em 0; padding: 0 1em; border-left: 3px solid #d0d7de; color: #57606a; }
@@ -467,6 +502,51 @@ ul, ol { padding-left: 1.6em; }
   blockquote { color: #9198a1; border-left-color: #30363d; }
   a { color: #4493f8; }
 }`;
+}
+
+/**
+ * A base64-encoded font face to embed in a self-contained HTML export (see
+ * wrapStandaloneHtml). `family` is validated against KNOWN_FAMILIES and
+ * `base64` against a strict charset before either reaches the exported
+ * file's stylesheet — this data crosses from the app's own font-loading
+ * pipeline (./fontEmbeds) into a file shared with third parties, so it is
+ * never treated as pre-vetted CSS, the same posture as the `margin` and
+ * `font` fields of PageConfig.
+ */
+export interface EmbeddedFontFace {
+  family: string;
+  italic: boolean;
+  base64: string;
+  /** e.g. "200 900" for a variable font's weight axis, or "400" for a single
+   * static weight. Without this, the browser only registers the face for
+   * `normal` (400) and synthesizes a faux bold for any heading or `<strong>`
+   * text — even though the embedded bytes are the full variable font and
+   * already contain a true bold instance. */
+  weight: string;
+}
+
+const BASE64_RE = /^[A-Za-z0-9+/]+=*$/;
+const WEIGHT_RE = /^\d{1,3}( \d{1,3})?$/;
+
+function fontFaceCss(fonts: readonly EmbeddedFontFace[]): string {
+  return fonts
+    .filter(
+      (f) =>
+        KNOWN_FAMILIES.has(f.family) &&
+        BASE64_RE.test(f.base64) &&
+        WEIGHT_RE.test(f.weight),
+    )
+    .map(
+      (f) => `@font-face {
+  font-family: "${f.family}";
+  font-style: ${f.italic ? "italic" : "normal"};
+  font-weight: ${f.weight};
+  font-display: swap;
+  src: url(data:font/woff2;base64,${f.base64}) format("woff2");
+}`,
+    )
+    .join("\n");
+}
 
 /**
  * A single, self-contained HTML document: the rendered markdown plus inline
@@ -477,11 +557,15 @@ export function renderStandaloneHtml(
   mode: PortabilityMode,
   title: string,
   allowRemoteImages = false,
+  fontId: string = DEFAULT_FONT_ID,
+  embeddedFonts: readonly EmbeddedFontFace[] = [],
 ): string {
   return wrapStandaloneHtml(
     renderDocumentHtml(markdown, mode),
     title,
     allowRemoteImages,
+    fontId,
+    embeddedFonts,
   );
 }
 
@@ -525,11 +609,15 @@ export function wrapStandaloneHtml(
   body: string,
   title: string,
   allowRemoteImages = false,
+  fontId: string = DEFAULT_FONT_ID,
+  embeddedFonts: readonly EmbeddedFontFace[] = [],
 ): string {
   const safeTitle = title.replace(
     /[&<>]/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c,
   );
+  const safeFontId = isFontId(fontId) ? fontId : DEFAULT_FONT_ID;
+  const faces = fontFaceCss(embeddedFonts);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -538,7 +626,8 @@ export function wrapStandaloneHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${safeTitle}</title>
 <style>
-${STANDALONE_CSS}
+${faces}
+${standaloneCss(fontStack(safeFontId))}
 </style>
 </head>
 <body>
@@ -584,7 +673,15 @@ export function contentExpression(
 export function buildPrintCss(
   cfg: PageConfig,
   vars: { title: string; author?: string; date: string },
-  root = "#print-root",
+  // A class, not an ID: Paged.js's Sheet.parse() rewrites every ID selector
+  // into `[data-id="…"]` (replaceIds), and data-id is only ever stamped onto
+  // *content* nodes it clones into the paginated output, never onto the
+  // render-target element itself. An ID-scoped root here would compile to a
+  // selector nothing in the paginated DOM ever matches, silently dropping
+  // every rule below (menu, headings, code font, justify — everything except
+  // the unscoped .ml-pagebreak and the @page block, which at-rules skip).
+  // Class selectors pass through untouched.
+  root = ".ml-print",
 ): string {
   const header = contentExpression(cfg.header, vars);
   const footer = contentExpression(cfg.footer, vars);
@@ -601,7 +698,7 @@ export function buildPrintCss(
 }
 
 ${root} {
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: ${fontStack(cfg.font)};
   font-size: 11pt;
   line-height: 1.5;
   color: #111111;
@@ -623,7 +720,7 @@ ${root} blockquote {
   color: #444444;
 }
 ${root} pre, ${root} code {
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: ${MONO_STACK};
   font-size: 9.5pt;
 }
 ${root} pre {
