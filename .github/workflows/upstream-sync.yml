@@ -41,7 +41,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.client_payload.sha }}
-          FILES: ${{ join(github.event.client_payload.files, '\n') }}
+          FILES_JSON: ${{ toJSON(github.event.client_payload.files) }}
         run: |
           BRANCH="sync/upstream-${SHA:0:7}"
           git checkout -b "$BRANCH"
@@ -59,7 +59,7 @@ jobs:
               mv "$f.upstream" "$f"
               CHANGED+=("$f")
             fi
-          done <<< "$FILES"
+          done < <(jq -r '.[]' <<< "$FILES_JSON")
 
           if [ "${#CHANGED[@]}" -eq 0 ]; then
             echo "Nothing to sync — Monoleaf_web already matches upstream."
