@@ -423,10 +423,18 @@ html.theme-dark .toolbar-brand .brand-dark {
   font-size: 13px;
   line-height: 1;
 }
-/* "Aa" change-case glyph. */
+/* "A/a" change-case glyph — reads "A/a" rather than "Aa" because the
+   document-font button (.font-glyph below) also reads "Aa" and the two sit
+   close enough in the toolbar to be mistaken for each other. */
 .case-glyph {
   font-size: 13.5px;
   letter-spacing: 0.5px;
+}
+/* Document-font toolbar button: shows "Aa" set in the actual chosen font
+   (see refreshFontButton in main.ts), so it previews the font itself. See
+   .case-glyph above for why change-case uses "A/a" rather than also "Aa". */
+.font-glyph {
+  font-size: 14px;
 }
 .script-glyph sub,
 .script-glyph sup {
