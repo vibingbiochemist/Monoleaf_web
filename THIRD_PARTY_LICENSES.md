@@ -95,7 +95,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/commands@6.10.4
+## @codemirror/commands@6.11.0
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/commands
@@ -907,7 +907,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/view@6.43.8
+## @codemirror/view@6.43.9
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/view
@@ -2422,7 +2422,7 @@ OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## highlight.js@11.11.1
+## highlight.js@11.12.0
 
 License: BSD-3-Clause
 Repository: https://github.com/highlightjs/highlight.js
