@@ -7,7 +7,8 @@
  * versa (wired in main.ts via the #fn:/#fnref: data-url scheme). [^1] is plain
  * text in the .md and renders on GitHub too.
  */
-import { syntaxTree } from "@codemirror/language";
+import { ancestorMatches } from "./syntax";
+import { formatShortcut } from "./platform";
 import { EditorState, Extension, RangeSetBuilder } from "@codemirror/state";
 import {
   Decoration,
@@ -48,10 +49,11 @@ class FootnoteWidget extends WidgetType {
       "data-url",
       this.kind === "ref" ? `#fn:${this.label}` : `#fnref:${this.label}`,
     );
-    sup.title =
+    sup.title = formatShortcut(
       this.kind === "ref"
         ? `Footnote ${this.label}: Ctrl+click to jump to the note`
-        : `Note ${this.label}: Ctrl+click to jump back to the reference`;
+        : `Note ${this.label}: Ctrl+click to jump back to the reference`,
+    );
     return sup;
   }
 
@@ -61,19 +63,6 @@ class FootnoteWidget extends WidgetType {
 }
 
 const CODE_NODE = /Code|Comment|HTML/;
-
-function insideCode(state: EditorState, pos: number): boolean {
-  for (
-    let node: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(
-      state,
-    ).resolveInner(pos, 1);
-    node;
-    node = node.parent
-  ) {
-    if (CODE_NODE.test(node.name)) return true;
-  }
-  return false;
-}
 
 function cursorOnLine(state: EditorState, from: number, to: number): boolean {
   const lineStart = state.doc.lineAt(from).from;
@@ -123,7 +112,7 @@ function buildFootnoteDecorations(view: EditorView): {
     while (pos <= to) {
       const line = state.doc.lineAt(pos);
       for (const match of findInLine(line.text, line.from)) {
-        if (insideCode(state, match.from)) continue;
+        if (ancestorMatches(state, match.from, CODE_NODE)) continue;
         if (cursorOnLine(state, match.from, match.to)) continue;
         const deco = Decoration.replace({
           widget: new FootnoteWidget(match.label, match.kind),
