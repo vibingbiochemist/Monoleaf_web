@@ -8,6 +8,7 @@ import {
   marginToPx,
   parsePageConfig,
   renderDocumentHtml,
+  renderDocumentHtmlAsync,
   renderStandaloneHtml,
   setPageConfigSpec,
   wrapStandaloneHtml,
@@ -331,7 +332,8 @@ describe("renderDocumentHtml", () => {
   });
 
   it("renders a local image as alt text, an https image as <img> once enabled", () => {
-    // A local reference is always alt text: the .md holds a path, never bytes.
+    // A local reference is alt text unless the caller hands in its bytes (next
+    // test): the .md holds a path, never bytes, and the renderer reads no files.
     const local = renderDocumentHtml("see ![a figure](x.png) here\n", "strict");
     expect(local).not.toContain("<img");
     expect(local).toContain("a figure");
@@ -354,6 +356,145 @@ describe("renderDocumentHtml", () => {
       // Module-level state: leaving it on would silently change later tests.
       setRemoteImagesAllowed(false);
     }
+  });
+
+  it("renders an inline data: image as <img>, with no loader and remote images off", () => {
+    // The bytes are in the .md, so there is nothing to load: the image must not
+    // degrade to alt text the way an unloaded local reference does.
+    const html = renderDocumentHtml(
+      "![fig](data:image/png;base64,iVBORw0KGgo=)\n",
+      "strict",
+    );
+    expect(html).toContain(
+      '<img src="data:image/png;base64,iVBORw0KGgo=" alt="fig"',
+    );
+    // The image rule trusts markdown-it's validateLink to keep scriptable
+    // data: types (SVG, HTML) from ever becoming an image token.
+    const svg = renderDocumentHtml(
+      "![x](data:image/svg+xml;base64,PHN2Zz4=)\n",
+      "strict",
+    );
+    expect(svg).not.toContain("<img");
+  });
+
+  it("embeds a local image the caller has loaded, in markdown and raw HTML alike", () => {
+    const images = new Map([
+      ["x.png", "data:image/png;base64,AAAA"],
+      ["figures/plot (1).png", "data:image/png;base64,BBBB"],
+    ]);
+    const doc = [
+      "see ![a figure](x.png) here",
+      "",
+      '<img src="figures/plot (1).png" width="300">',
+      "",
+      'inline <img src="x.png" alt="x"> too, and ![missing](nope.png)',
+      "",
+    ].join("\n");
+    const html = renderDocumentHtml(doc, "strict", false, images);
+    expect(html).toContain(
+      '<img src="data:image/png;base64,AAAA" alt="a figure"',
+    );
+    expect(html).toContain(
+      '<img src="data:image/png;base64,BBBB" width="300">',
+    );
+    expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="x">');
+    // Not in the map: alt text, exactly as before.
+    expect(html).not.toContain("nope.png");
+    expect(html).toContain("missing");
+  });
+
+  it("async render: asks the loader once for every local reference as written, then embeds what comes back", async () => {
+    const doc = [
+      "![a](x.png) ![b](./figures/plot.png) ![a again](x.png) ![u](Bild_ö.png)",
+      "![remote](https://x.com/l.png) ![inline](data:image/png;base64,AAAA)",
+      '<img src="C:\\pics\\abs.png"> <img src="//cdn.test/p.png">',
+      "",
+      "<div><img src='quoted.png' alt='q'></div>",
+      "",
+      '<img src="Martin\'s plot.png" width="300">',
+      "",
+    ].join("\n");
+    const asked: string[][] = [];
+    const html = await renderDocumentHtmlAsync(
+      doc,
+      "strict",
+      false,
+      (sources) => {
+        asked.push([...sources]);
+        return Promise.resolve(
+          new Map([
+            ["x.png", "data:image/png;base64,XXXX"],
+            ["quoted.png", "data:image/png;base64,QQQQ"],
+            ["Martin's plot.png", "data:image/png;base64,PPPP"],
+            // markdown-it reports the destination percent-encoded; the loader
+            // (resolveLocalImagePath) decodes it, the key stays as reported.
+            ["Bild_%C3%B6.png", "data:image/png;base64,UUUU"],
+          ]),
+        );
+      },
+    );
+    expect(asked).toHaveLength(1);
+    expect([...asked[0]].sort()).toEqual(
+      [
+        "./figures/plot.png",
+        "Bild_%C3%B6.png",
+        "C:\\pics\\abs.png",
+        "Martin's plot.png",
+        "quoted.png",
+        "x.png",
+      ].sort(),
+    );
+    expect(html).toContain('<img src="data:image/png;base64,XXXX" alt="a"');
+    expect(html).toContain('<img src="data:image/png;base64,UUUU" alt="u"');
+    expect(html).toContain("<img src='data:image/png;base64,QQQQ' alt='q'>");
+    expect(html).toContain(
+      '<img src="data:image/png;base64,PPPP" width="300">',
+    );
+    // Asked for but not returned: alt text, as before.
+    expect(html).not.toContain("figures/plot.png");
+    expect(html).toContain('alt="a"> b <img');
+  });
+
+  it("async render: does not call the loader for a document without local images", async () => {
+    let calls = 0;
+    const html = await renderDocumentHtmlAsync(
+      "# Title\n\n![remote](https://x.com/l.png) and a [^1] note\n\n[^1]: Foot\n",
+      "strict",
+      false,
+      () => {
+        calls++;
+        return Promise.resolve(new Map());
+      },
+    );
+    expect(calls).toBe(0);
+    // The parse/render split must keep plugin state (footnotes live on env).
+    expect(html).toContain("footnote");
+    expect(html).toContain("Foot");
+  });
+
+  it("keeps the image's written reference on the element only for page measurement", () => {
+    const images = new Map([
+      ["x.png", "data:image/png;base64,AAAA"],
+      ['C:\\pics\\a "b".png', "data:image/png;base64,BBBB"],
+    ]);
+    const doc =
+      '![a](x.png)\n\n<img src=\'C:\\pics\\a "b".png\' width="300">\n';
+    // sourceLines = true is the editor's page measurement: the reference is
+    // needed to map a page break that lands on the image back to its line.
+    const measured = renderDocumentHtml(doc, "strict", true, images);
+    expect(measured).toContain(
+      '<img src="data:image/png;base64,AAAA" alt="a" data-ml-src="x.png">',
+    );
+    expect(measured).toContain(
+      '<img src=\'data:image/png;base64,BBBB\' data-ml-src="C:\\pics\\a &quot;b&quot;.png" width="300">',
+    );
+    // An export (sourceLines = false) must not carry a local path: a shared
+    // .html would otherwise name the author's user folder.
+    const exported = renderDocumentHtml(doc, "strict", false, images);
+    expect(exported).not.toContain("data-ml-src");
+    expect(exported).toContain(
+      '<img src="data:image/png;base64,AAAA" alt="a">',
+    );
   });
 
   it("keeps CriticMarkup as literal text (dumb-viewer parity)", () => {
@@ -395,6 +536,19 @@ describe("buildPrintCss", () => {
     );
     expect(css).not.toContain("@top-center");
     expect(css).not.toContain("@bottom-center");
+  });
+
+  it("caps images to the page body height, from Paged.js's own geometry", () => {
+    // An image cannot be fragmented; without this a tall photo is clipped at
+    // the page edge in the PDF and undercounted in the editor's page count.
+    const css = buildPrintCss(DEFAULT_PAGE_CONFIG, VARS, ".ml-measure");
+    const rule = /\.ml-measure img \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain(
+      "max-height: calc(var(--pagedjs-height) - var(--pagedjs-margin-top) - var(--pagedjs-margin-bottom)",
+    );
+    expect(rule).toContain("max-width: 100%");
+    expect(rule).toContain("object-fit: contain");
+    expect(rule).toContain("break-inside: avoid");
   });
 
   it("justify config emits justified paragraphs", () => {
