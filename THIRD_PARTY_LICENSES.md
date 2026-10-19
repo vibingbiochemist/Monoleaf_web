@@ -95,7 +95,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/commands@6.11.0
+## @codemirror/commands@6.11.1
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/commands
@@ -762,7 +762,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/language@6.12.4
+## @codemirror/language@6.13.1
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/language
@@ -849,7 +849,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/search@6.7.1
+## @codemirror/search@6.7.2
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/search
@@ -878,7 +878,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/state@6.7.1
+## @codemirror/state@6.7.6
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/state
@@ -907,7 +907,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## @codemirror/view@6.43.9
+## @codemirror/streamparser@6.0.0
+
+License: MIT
+Repository: git+https://code.haverbeke.berlin/codemirror/streamparser
+
+```
+MIT License
+
+Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## @codemirror/view@6.43.14
 
 License: MIT
 Repository: git+https://code.haverbeke.berlin/codemirror/view
@@ -1239,7 +1268,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## @fontsource-variable/source-sans-3@5.3.0
+## @fontsource-variable/source-sans-3@5.3.1
 
 License: OFL-1.1
 Repository: https://github.com/fontsource/font-files
@@ -1340,7 +1369,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## @fontsource-variable/source-serif-4@5.3.0
+## @fontsource-variable/source-serif-4@5.3.1
 
 License: OFL-1.1
 Repository: https://github.com/fontsource/font-files
@@ -2518,7 +2547,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## commander@8.3.0
+## commander@15.0.0
 
 License: MIT
 Repository: https://github.com/tj/commander.js
@@ -2652,7 +2681,7 @@ OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## dompurify@3.4.13
+## dompurify@3.4.17
 
 License: (MPL-2.0 OR Apache-2.0)
 Repository: https://github.com/cure53/DOMPurify
@@ -3065,7 +3094,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## katex@0.18.4
+## katex@0.19.0
 
 License: MIT
 Repository: https://github.com/KaTeX/KaTeX
@@ -3235,7 +3264,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## markdown-it@15.0.0
+## markdown-it@15.0.2
 
 License: MIT
 Repository: https://github.com/markdown-it/markdown-it
