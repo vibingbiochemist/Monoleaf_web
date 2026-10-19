@@ -1,10 +1,9 @@
 # Receives the repository_dispatch sent by Monoleaf's notify-web-port.yml
 # when a push to Monoleaf's main touches one of the src/*.ts files this repo
 # copies verbatim from it. Copies over exactly the files named in the
-# dispatch payload and opens a PR — this repo's own ci.yml then runs on that
-# PR like any other, which is the actual correctness gate. This workflow's
-# job is only to save someone the manual copy-paste, not to vouch for the
-# change.
+# dispatch payload, opens a PR and starts this repo's own ci.yml on it, which
+# is the actual correctness gate. This workflow's job is only to save someone
+# the manual copy-paste, not to vouch for the change.
 #
 # SHARED_FILES here must match Monoleaf's copy in notify-web-port.yml — see
 # the comment there. If a file is renamed or newly shared, update both lists.
@@ -17,6 +16,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # A PR opened with GITHUB_TOKEN triggers no pull_request workflows, so CI
+  # is started explicitly with workflow_dispatch (which GITHUB_TOKEN may do).
+  actions: write
 
 concurrency:
   group: ${{ github.workflow }}
@@ -85,3 +87,4 @@ jobs:
             --title "Sync shared editor logic from Monoleaf@${SHA:0:7}" \
             --body-file pr-body.txt \
             --base main --head "$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"
