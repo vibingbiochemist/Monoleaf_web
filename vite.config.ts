@@ -19,5 +19,11 @@ export default defineConfig({
   },
   test: {
     exclude: ["**/node_modules/**", "**/dist/**"],
+    // These suites in the shared livepreview.test.ts drive the desktop app's
+    // disk-image loading through a mocked Tauri invoke; here localimages.ts
+    // is a browser stub that never loads anything. Skipped by name because
+    // the shared test file must stay a verbatim copy.
+    testNamePattern:
+      /^(?!(local image widgets|local image lookup by name|saving resolves a previously-unresolvable local image|loadFailureCount: retries a failure) )/,
   },
 });

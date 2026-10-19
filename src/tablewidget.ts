@@ -16,7 +16,9 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { MenuItem } from "./contextmenu";
+import { insertedLength } from "./document";
 import { PageBreak, pageBreakPositions, setPageBreaks } from "./pagination";
+import { cellSpellcheck, paintMisspelledIn } from "./spellcheck";
 import { cellDisplayHtml, cellHasRichContent } from "./tablecell";
 import {
   ColAlign,
@@ -41,7 +43,11 @@ import {
  * Block widgets spanning line breaks must be provided by a StateField.
  */
 
-const refreshTables = StateEffect.define<null>();
+/** Rebuild the table widgets without a document change: dispatched once the
+ * background parse has advanced far enough to see tables it had not reached
+ * (see tableRefresher). Exported so tests can do the same after
+ * ensureSyntaxTree. */
+export const refreshTables = StateEffect.define<null>();
 
 // Focus to restore after a commit rebuilds the widget (same table start).
 let pendingFocus: { from: number; row: number; col: number } | null = null;
@@ -220,21 +226,53 @@ export function tableExtensions(): Extension {
   return [tableField, tableRefresher];
 }
 
-/** Current document range of the given widget (positions move with edits). */
+/** The grid each widget object built, so a stale object can still be traced
+ * to its table (see widgetRange). */
+const wrapByWidget = new WeakMap<TableWidget, HTMLElement>();
+
+/**
+ * Current document range of the given widget (positions move with edits).
+ *
+ * Identity alone is not enough. A rebuild without a document change (page
+ * breaks placed by pagination, refreshTables) creates a new TableWidget for
+ * the same table, and because eq() calls it the same table CodeMirror keeps
+ * the existing DOM, whose event handlers still hold the OLD object. Matching
+ * only by identity then found nothing, and every cell commit, toolbar action
+ * and Delete table on that grid silently did nothing: typed text stayed on
+ * screen but never reached the document, so it was missing from save and
+ * export. So when identity fails, the grid's own position in the document
+ * picks the decoration now standing in for it, provided it describes the
+ * same table.
+ */
 function widgetRange(
   view: EditorView,
   widget: TableWidget,
 ): { from: number; to: number } | null {
-  let found: { from: number; to: number } | null = null;
+  const wrap = wrapByWidget.get(widget);
+  let at: number | null = null;
+  if (wrap?.isConnected) {
+    try {
+      at = view.posAtDOM(wrap);
+    } catch {
+      at = null; // not part of this view's content (any more)
+    }
+  }
+  let byPosition: { from: number; to: number } | null = null;
   const it = view.state.field(tableField).iter();
   while (it.value !== null) {
-    if ((it.value.spec as { widget?: WidgetType }).widget === widget) {
-      found = { from: it.from, to: it.to };
-      break;
+    const current = (it.value.spec as { widget?: WidgetType }).widget;
+    if (current === widget) return { from: it.from, to: it.to };
+    if (
+      byPosition === null &&
+      it.from === at &&
+      current instanceof TableWidget &&
+      current.eq(widget)
+    ) {
+      byPosition = { from: it.from, to: it.to };
     }
     it.next();
   }
-  return found;
+  return byPosition;
 }
 
 function commitModel(
@@ -345,6 +383,9 @@ function showCell(cell: HTMLElement, raw: string, splits?: CellSplit[]) {
   } else {
     cell.textContent = raw;
   }
+  // Spelling underlines for the rendered text (spellcheck.ts); a cell being
+  // edited shows its raw source instead, where the webview checks typing.
+  paintMisspelledIn(cell);
 }
 
 /** The markdown source of a cell, regardless of whether it is rendered. */
@@ -410,6 +451,7 @@ function buildTableDom(view: EditorView, widget: TableWidget): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "ml-table-wrap";
   wrap.dataset.from = String(widget.from);
+  wrapByWidget.set(widget, wrap);
 
   // --- hover toolbar --------------------------------------------------------
   const bar = document.createElement("div");
@@ -508,6 +550,10 @@ function buildTableDom(view: EditorView, widget: TableWidget): HTMLElement {
   ) => {
     const cell = document.createElement(tag);
     cell.contentEditable = "plaintext-only";
+    // Explicit, not inherited: on Windows the editor content says "false"
+    // because its own underlines replace the webview's (spellcheck.ts), and
+    // cells are outside the text those underlines cover.
+    cell.spellcheck = view.state.facet(cellSpellcheck);
     cell.dataset.row = String(row);
     cell.dataset.col = String(col);
     showCell(cell, text, cellSplits.get(`${row}:${col}`));
@@ -774,11 +820,19 @@ export function insertTableSized(cols: number, rows: number): StateCommand {
     const table = serializeTable(emptyTable(cols, rows)).replace(/\n/g, nl);
     const before = range.from === line.from ? "" : nl + nl;
     const insert = `${before}${table}${nl}${nl}`;
-    pendingFocus = { from: range.from + before.length, row: -1, col: 0 };
+    // Measured as the document counts, not by string length: each line
+    // break in a CRLF file is two characters here but one position there.
+    pendingFocus = {
+      from: range.from + insertedLength(state, before),
+      row: -1,
+      col: 0,
+    };
     dispatch(
       state.update({
         changes: { from: range.from, to: range.to, insert },
-        selection: EditorSelection.cursor(range.from + insert.length),
+        selection: EditorSelection.cursor(
+          range.from + insertedLength(state, insert),
+        ),
         userEvent: "input.table",
         scrollIntoView: true,
       }),

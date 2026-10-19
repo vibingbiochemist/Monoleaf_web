@@ -1640,6 +1640,16 @@ html.theme-dark #editor .cm-cursor {
   color: var(--muted);
   margin: 18px 0 8px;
 }
+.sidebar-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+.sidebar-section-row .sidebar-section {
+  margin: 0;
+}
 
 .comment-card {
   border: 1px solid light-dark(#e8ddb8, #514831);
@@ -1718,6 +1728,11 @@ html.theme-dark #editor .cm-cursor {
 
 .comment-btn:hover {
   background: var(--hover);
+}
+
+.comment-btn-danger:hover {
+  color: light-dark(#b42318, #f97066);
+  border-color: currentColor;
 }
 
 /* --- Dialogs --- */

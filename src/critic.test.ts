@@ -52,6 +52,62 @@ describe("parseCritic", () => {
     expect(doc.slice(r.segments[0].from, r.segments[0].to)).toBe("old");
     expect(doc.slice(r.segments[1].from, r.segments[1].to)).toBe("new");
   });
+
+  it("parses 200 KB of unclosed markup in linear time", () => {
+    // The old lazy regex rescanned to the end of the text from every
+    // opener: 12 KB of "{~~a~>" took 9 s (cubic), unclosed "{++" was
+    // quadratic. One closed region at the end must still be found.
+    for (const opener of ["{~~a~>", "{++", "{--", "{==", "{>>", "{~~"]) {
+      const doc = `${opener.repeat(Math.ceil(200_000 / opener.length))}{==x==}`;
+      const start = performance.now();
+      const regions = parseCritic(doc);
+      expect(performance.now() - start).toBeLessThan(500);
+      expect(regions[regions.length - 1]?.to).toBe(doc.length);
+    }
+  });
+
+  it("matches the old regex on random markup", () => {
+    // The regex parseCritic replaced, kept as the reference for its results.
+    const reference =
+      /\{\+\+([\s\S]*?)\+\+\}|\{--([\s\S]*?)--\}|\{~~([\s\S]*?)~>([\s\S]*?)~~\}|\{==([\s\S]*?)==\}|\{>>([\s\S]*?)<<\}/g;
+    // Whole tokens plus loose characters, so overlapping and half-formed
+    // markup ("{~~~>~~}", "{+++}") comes up often.
+    const pieces = [
+      ...["{++", "++}", "{--", "--}", "{~~", "~>", "~~}"],
+      ...["{==", "==}", "{>>", "<<}", "{", "}", "+", "-", "~", ">", "a"],
+    ];
+    // Park-Miller: the product stays below 2^53, so it is exact in a double.
+    let seed = 1;
+    const rand = (n: number) => {
+      seed = (seed * 48271) % 2147483647;
+      return seed % n;
+    };
+    const kinds = ["insertion", "deletion", "substitution", "highlight"];
+    let substitutions = 0;
+    for (let i = 0; i < 20_000; i++) {
+      let doc = "";
+      for (let len = rand(24); len > 0; len--) {
+        doc += pieces[rand(pieces.length)];
+      }
+      const expected = [...doc.matchAll(reference)].map((m) => {
+        const group = [1, 2, 3, 5].findIndex((g) => m[g] !== undefined);
+        const kind = kinds[group] ?? "comment";
+        const from = m.index;
+        const to = from + m[0].length;
+        if (kind !== "substitution") return { kind, inner: [from + 3, to - 3] };
+        const arrow = from + 3 + m[3].length;
+        return { kind, inner: [from + 3, arrow, arrow + 2, to - 3] };
+      });
+      const actual = parseCritic(doc).map((r) => ({
+        kind: r.kind,
+        inner: r.segments.flatMap((s) => [s.from, s.to]),
+      }));
+      expect(actual, doc).toEqual(expected);
+      substitutions += actual.filter((r) => r.kind === "substitution").length;
+    }
+    // Guard against a generator that stops producing interesting input.
+    expect(substitutions).toBeGreaterThan(500);
+  });
 });
 
 describe("suggesting mode: typing", () => {
@@ -166,6 +222,24 @@ describe("CRLF documents", () => {
     });
     // Positions count line breaks as 1 unit, so [0,7] covers "one\r\ntwo".
     expect(serializeDocument(tr.state)).toBe("{--one\r\ntwo--}\r\n");
+    // "{--" + 7 positions + "--}": the cursor ends after the closer. Counting
+    // the "\r\n" as two characters used to put it one past.
+    expect(tr.state.selection.main.head).toBe(13);
+  });
+
+  it("puts the cursor right after a tracked line break", () => {
+    const base = createDocumentState("one two\r\nend\r\n", [
+      trackingExtension(),
+    ]);
+    const tr = base.update({
+      changes: { from: 3, insert: "\r\n\r\n" },
+      userEvent: "input.type",
+    });
+    expect(serializeDocument(tr.state)).toBe(
+      "one{++\r\n\r\n++} two\r\nend\r\n",
+    );
+    // 3 + "{++" + two line breaks (one position each).
+    expect(tr.state.selection.main.head).toBe(8);
   });
 });
 

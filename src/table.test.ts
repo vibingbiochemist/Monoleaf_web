@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { ensureSyntaxTree } from "@codemirror/language";
-import { insertTable, tableField } from "./tablewidget";
+import { insertTable, refreshTables, tableField } from "./tablewidget";
 import { markdownForMode } from "./portability";
 import {
   deleteCol,
   deleteRow,
   emptyTable,
+  escapeCellPipes,
   insertCol,
   insertRow,
   parseTableText,
@@ -41,6 +42,20 @@ describe("parse + serialize", () => {
     const s = serializeTable(parseTableText(SRC)!);
     expect(s).toContain("has \\| pipe");
     expect(s).toContain("| :--- | ---: | --- |");
+  });
+
+  it("keeps a cell whole when a backslash sits right before a pipe", () => {
+    // Before the fix `a\|b` serialized as `a\\|b`, which re-parsed as two
+    // cells and gave the row an extra column.
+    for (const cell of [String.raw`a\|b`, String.raw`a\\\|b`, "a|b"]) {
+      const base = parseTableText("| h | k |\n| --- | --- |\n| p | q |")!;
+      const again = parseTableText(serializeTable(setCell(base, 0, 0, cell)))!;
+      expect(again.rows[0]).toHaveLength(2);
+      expect(again.rows[0][1]).toBe("q");
+    }
+    // An even run before a pipe is already safe and serializes as before.
+    expect(escapeCellPipes(String.raw`x\\|y`)).toBe(String.raw`x\\\|y`);
+    expect(escapeCellPipes(String.raw`a\|b`)).toBe(String.raw`a\\\|b`);
   });
 
   it("rejects non-tables", () => {
@@ -109,10 +124,13 @@ describe("table widget field", () => {
       extensions: [markdownForMode("enhanced"), tableField],
     });
     ensureSyntaxTree(state, doc.length, 5000);
-    // Rebuild via an empty doc change so the field sees the full parse.
-    const after = state.update({
-      changes: { from: 0, insert: "" },
-    }).state;
+    // Rebuild the field against the now complete parse, the way the app does
+    // after a background parse (tableRefresher). Not an empty insert: that is
+    // no document change, so the field kept what it built at creation, when
+    // the parse only had a 20 ms budget. On a loaded machine (the full suite
+    // in parallel workers) that budget ran out before the table and this test
+    // failed at random with no decorations at all.
+    const after = state.update({ effects: refreshTables.of(null) }).state;
     const decos: number[] = [];
     const it2 = after.field(tableField).iter();
     while (it2.value !== null) {
@@ -120,6 +138,22 @@ describe("table widget field", () => {
       it2.next();
     }
     expect(decos).toEqual([doc.indexOf("| Name")]);
+  });
+
+  it("picks up a table the first parse had not reached once refreshed", () => {
+    // The parse at state creation stops after the first 3000 characters, so
+    // this table is never in it: the same situation the 20 ms budget creates
+    // at random under load, made deterministic.
+    const filler = "Lorem ipsum dolor sit amet.\n\n".repeat(150);
+    const doc = `${filler}${SRC}\n\nafter`;
+    const state = EditorState.create({
+      doc,
+      extensions: [markdownForMode("enhanced"), tableField],
+    });
+    expect(state.field(tableField).size).toBe(0);
+    ensureSyntaxTree(state, doc.length, 5000);
+    const after = state.update({ effects: refreshTables.of(null) }).state;
+    expect(after.field(tableField).size).toBe(1);
   });
 
   it("insertTable writes a skeleton and moves on", () => {

@@ -4,7 +4,12 @@ import { EditorView, keymap } from "@codemirror/view";
 // pagination pass — see ./fontfaces for why the ordering matters.
 import "./fontfaces";
 import { editorSetup, rawViewExtensions } from "./setup";
-import { Compartment, Prec, StateCommand } from "@codemirror/state";
+import {
+  Compartment,
+  Prec,
+  StateCommand,
+  type TransactionSpec,
+} from "@codemirror/state";
 import { MenuItem, showContextMenu } from "./contextmenu";
 import {
   htmlToMarkdown,
@@ -24,6 +29,8 @@ import {
   type CaseMode,
   clearFormatting,
   collectHeadings,
+  cursorLineEnd,
+  cursorLineStart,
   deleteHardBreakBackward,
   hardBreakEnter,
   imageMarkup,
@@ -54,6 +61,8 @@ import {
   addReplySpec,
   commentsExtension,
   createCommentSpec,
+  deleteResolvedSpec,
+  deleteThreadSpec,
   parseComments,
   setResolvedSpec,
 } from "./comments";
@@ -113,7 +122,10 @@ import {
 } from "./pagination";
 import {
   clipboard,
+  formatShortcut,
   getAppVersion,
+  isMac,
+  localizeShortcutLabels,
   openDocument,
   openExternal,
   saveDocument,
@@ -872,6 +884,43 @@ function refreshComments() {
       const spec = setResolvedSpec(view.state, id, resolved);
       if (spec !== null) view.dispatch(spec);
     },
+    onDelete(id) {
+      void (async () => {
+        const thread = parseComments(view.state.doc.toString()).find(
+          (t) => t.id === id,
+        );
+        const n = thread?.thread.length ?? 0;
+        const ok = await uiConfirm(
+          formatShortcut(
+            `Delete this thread${n > 1 ? ` and its ${n} comments` : ""} from ` +
+              "the document? The commented text stays. Ctrl+Z restores it.",
+          ),
+          { title: "Delete comment thread", okLabel: "Delete" },
+        );
+        if (!ok) return;
+        // Built from the state as it is now, not before the dialog: the
+        // document may have changed underneath it (an autosave reload, an
+        // edit in another pane), and stale offsets would cut the wrong text.
+        dispatchCommentRemoval(deleteThreadSpec(view.state, id));
+      })();
+    },
+    onDeleteResolved() {
+      void (async () => {
+        const n = parseComments(view.state.doc.toString()).filter(
+          (t) => t.resolved,
+        ).length;
+        if (n === 0) return;
+        const ok = await uiConfirm(
+          formatShortcut(
+            `Delete ${n === 1 ? "the resolved thread" : `all ${n} resolved threads`} ` +
+              "from the document? The commented text stays. Ctrl+Z restores them.",
+          ),
+          { title: "Delete resolved comments", okLabel: "Delete" },
+        );
+        if (!ok) return;
+        dispatchCommentRemoval(deleteResolvedSpec(view.state));
+      })();
+    },
     onSelect(id) {
       const thread = parseComments(view.state.doc.toString()).find(
         (t) => t.id === id,
@@ -886,6 +935,16 @@ function refreshComments() {
       view.focus();
     },
   });
+}
+
+/**
+ * Apply a thread deletion and hand focus back to the editor: the Delete
+ * button that was focused is gone once the sidebar re-renders, and the
+ * promised Ctrl+Z only reaches the undo history from inside the editor.
+ */
+function dispatchCommentRemoval(spec: TransactionSpec | null) {
+  if (spec !== null) view.dispatch(spec);
+  view.focus();
 }
 
 let commentsRefreshQueued = false;
@@ -1229,7 +1288,9 @@ zoomSlider.addEventListener("input", () => setZoom(Number(zoomSlider.value)));
 window.addEventListener(
   "wheel",
   (e) => {
-    if (!e.ctrlKey) return;
+    // macOS reports a trackpad pinch as ctrlKey too; Cmd+wheel is the
+    // keyboard-and-mouse equivalent there.
+    if (!(e.ctrlKey || (isMac && e.metaKey))) return;
     e.preventDefault();
     setZoom(zoom + (e.deltaY < 0 ? 10 : -10));
   },
@@ -1387,8 +1448,12 @@ function refreshReviewButtons(state = view.state) {
   suggestButton.textContent = "Track changes";
   suggestButton.setAttribute("aria-pressed", String(tracking));
   suggestButton.title = tracking
-    ? "Track changes is ON: edits become tracked changes (CriticMarkup). Click to edit directly (Ctrl+Shift+E)."
-    : "Track changes is OFF. Click so edits become tracked changes instead of applying directly (Ctrl+Shift+E).";
+    ? formatShortcut(
+        "Track changes is ON: edits become tracked changes (CriticMarkup). Click to edit directly (Ctrl+Shift+E).",
+      )
+    : formatShortcut(
+        "Track changes is OFF. Click so edits become tracked changes instead of applying directly (Ctrl+Shift+E).",
+      );
 }
 
 function toggleTracking() {
@@ -1407,6 +1472,13 @@ function toggleTracking() {
 
 const formattingKeymap = keymap.of([
   { key: "Backspace", run: deleteHardBreakBackward },
+  // Home/End announce themselves ("select.boundary") so the repair layer
+  // snaps the cursor beside a hidden marker instead of reading the move as
+  // an arrow-key step; see lineBoundary in commands.ts.
+  { key: "Home", run: cursorLineStart },
+  { key: "End", run: cursorLineEnd },
+  { mac: "Cmd-ArrowLeft", run: cursorLineStart },
+  { mac: "Cmd-ArrowRight", run: cursorLineEnd },
   { key: "Enter", run: paragraphEnter },
   { key: "Shift-Enter", run: hardBreakEnter },
   { key: "Mod-Enter", run: insertPageBreak },
@@ -1414,20 +1486,26 @@ const formattingKeymap = keymap.of([
   { key: "Mod-i", run: toggleItalic },
   { key: "Mod-Shift-x", run: toggleStrikethrough },
   { key: "Mod-u", run: toggleUnderline },
-  { key: "Mod-Alt-h", run: toggleHighlight },
+  // The `mac:` alternatives below mirror MAC_OVERRIDES in platform.ts:
+  // Cmd+Option+H (hide others), Cmd+` (cycle windows) and Cmd+M (minimise)
+  // are taken by macOS before the webview sees them. Windows/Linux unchanged.
+  { key: "Mod-Alt-h", mac: "Shift-Cmd-h", run: toggleHighlight },
   { key: "Mod-l", run: setAlignment("left") },
   { key: "Mod-e", run: setAlignment("center") },
   { key: "Mod-r", run: setAlignment("right") },
   { key: "Mod-j", run: setAlignment("justify") },
-  { key: "Mod-`", run: toggleInlineCode },
+  { key: "Mod-`", mac: "Shift-Cmd-c", run: toggleInlineCode },
   { key: "Mod-=", run: toggleSubscript },
   { key: "Mod-Shift-=", run: toggleSuperscript },
-  { key: "Mod-m", run: insertMath },
+  { key: "Mod-m", mac: "Alt-Cmd-e", run: insertMath },
   ...[1, 2, 3, 4, 5, 6].map((n) => ({
     key: `Mod-Shift-${n}`,
+    // ⇧⌘3/4/5/6 are macOS's system-wide screenshot shortcuts and never
+    // reach an app; Word for Mac puts headings on ⌥⌘1/2/3, so follow it.
+    mac: `Alt-Cmd-${n}`,
     run: setHeading(n),
   })),
-  { key: "Mod-Shift-0", run: setHeading(0) },
+  { key: "Mod-Shift-0", mac: "Alt-Cmd-0", run: setHeading(0) },
   {
     key: "Mod-k",
     run: () => {
@@ -2430,7 +2508,10 @@ window.addEventListener(
     if (!(e.ctrlKey || e.metaKey)) return;
     const key = e.key.toLowerCase();
     // Ctrl+Q toggles live/raw ("Quelltext"); Ctrl+E belongs to centering.
-    if (key === "q" && !e.shiftKey) {
+    // On macOS Cmd+Q quits the browser, so the toggle lives on Cmd+/ there —
+    // see MAC_OVERRIDES. No Shift test for "/": on German, French and other
+    // layouts "/" is itself a shifted key, so ⌘/ arrives with shiftKey set.
+    if (isMac ? key === "/" : key === "q" && !e.shiftKey) {
       e.preventDefault();
       toggleLiveView();
       return;
@@ -2499,3 +2580,4 @@ const namePrompted: Promise<unknown> = localStorage.getItem(AUTHOR_KEY)?.trim()
     });
 
 void Promise.allSettled([namePrompted, startupOpen()]);
+localizeShortcutLabels(); // ⌘ labels on macOS; no-op elsewhere
