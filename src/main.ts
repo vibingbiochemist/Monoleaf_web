@@ -114,6 +114,7 @@ import {
 } from "./remoteimages";
 import { Previewer } from "pagedjs";
 import {
+  BreakToken,
   extractPageBreaks,
   pageAt,
   pageBreaksField,
@@ -1032,9 +1033,44 @@ const pageFont = document.getElementById("page-font") as HTMLSelectElement;
 const pageHeader = document.getElementById("page-header") as HTMLInputElement;
 const pageFooter = document.getElementById("page-footer") as HTMLInputElement;
 
+// Each Paged.js page keeps a ResizeObserver alive after `preview()` resolves
+// (it's how Paged.js re-paginates on reflow). Wiping a preview container's
+// innerHTML directly — without running Chunker#removePages() first, which is
+// what disconnects it — leaves that observer attached to nodes that no
+// longer exist; its callback still fires (via requestAnimationFrame) and
+// throws "Cannot read properties of null (reading 'nextSibling')" from deep
+// inside Paged.js's own layout code (matched by PAGEDJS_NULL_READ above).
+// Tearing down through the previewer instead of past it avoids the crash
+// rather than merely swallowing it — and, since a mid-pagination crash is
+// what leaves the live page indicator stuck on stale breaks (see
+// runPagination's catch below), this is also what keeps it in sync with a
+// real PDF export.
+function teardownPreview(root: HTMLElement, previewer: Previewer | null) {
+  try {
+    previewer?.chunker.removePages();
+  } catch {
+    // Best-effort: pagination tooling is never allowed to block on cleanup.
+  }
+  root.innerHTML = "";
+}
+
+let printPreviewer: Previewer | null = null;
+// True for the entire duration of previewer.preview() in exportPdf(). Paged.js's
+// chunker is still actively creating/laying out Page objects during that
+// window (its render loop isn't cancelled just because our await is pending),
+// so tearing down through teardownPreview() then — e.g. Escape or the close
+// button firing mid-render — would call chunker.removePages(), which nulls
+// out each page's element/wrapper while the chunker's own loop is still
+// using them. That's a *different*, worse crash than the one teardownPreview
+// exists to prevent, and one that may not match PAGEDJS_NULL_READ. Guarding
+// here mirrors how runPagination() already refuses to overlap itself.
+let printPreviewRendering = false;
+
 function closePreview() {
+  if (printPreviewRendering) return;
   printPreview.hidden = true;
-  printRoot.innerHTML = "";
+  teardownPreview(printRoot, printPreviewer);
+  printPreviewer = null;
   // Drop the stylesheets Paged.js injected into the document head.
   document
     .querySelectorAll("style[data-pagedjs-inserted-styles]")
@@ -1044,6 +1080,10 @@ function closePreview() {
 }
 
 async function exportPdf() {
+  // A previous call's Paged.js render may still be in flight (its own loop
+  // isn't cancelled just because that earlier await settled our caller) —
+  // never tear down or re-render over it.
+  if (printPreviewRendering) return;
   // Never run two Paged.js layouts at once: cancel pending measurements and
   // wait out a running one before taking over the pipeline.
   window.clearTimeout(paginationTimer);
@@ -1064,20 +1104,21 @@ async function exportPdf() {
       meta.author.trim() || (localStorage.getItem(AUTHOR_KEY)?.trim() ?? ""),
     date: meta.date.trim() || new Date().toLocaleDateString(),
   });
-  printRoot.innerHTML = "";
+  teardownPreview(printRoot, printPreviewer);
   printPreview.hidden = false;
   const source = document.createElement("div");
   source.innerHTML = html;
+  const previewer = new Previewer();
+  printPreviewer = previewer;
+  printPreviewRendering = true;
   try {
-    await new Previewer().preview(
-      source,
-      [{ "monoleaf-print": css }],
-      printRoot,
-    );
+    await previewer.preview(source, [{ "monoleaf-print": css }], printRoot);
+    printPreviewRendering = false;
     printRoot.querySelectorAll("a[href]").forEach((a) => {
       a.setAttribute("title", "Opens in your default browser");
     });
   } catch (err) {
+    printPreviewRendering = false;
     closePreview();
     await showError(err);
   }
@@ -1308,11 +1349,20 @@ const pageIndicator = document.getElementById("page-indicator")!;
 const PAGINATION_KEY = "monoleaf.pagination";
 let paginationEnabled = localStorage.getItem(PAGINATION_KEY) !== "false";
 let knownBreaks: PageBreak[] = [];
-let knownPages = 1;
+// null until a measurement has succeeded for this document. A Paged.js
+// internal crash on the very first pass keeps the last known count, and before
+// any pass there is none — showing "1" there would be a confident wrong
+// number, so the indicator shows "?" instead.
+let knownPages: number | null = null;
+// The crash is a timing race, so a document's first measurement is attempted
+// up to this many times before "?" is left standing until the next edit.
+const FIRST_MEASURE_ATTEMPTS = 3;
+let firstMeasureFailures = 0;
 let paginationTimer: number | undefined;
 let paginationRunning = false;
 let paginationQueued = false;
 let lastMeasureKey = "";
+let paginationPreviewer: Previewer | null = null;
 
 function refreshPageIndicator() {
   if (
@@ -1323,7 +1373,7 @@ function refreshPageIndicator() {
     return;
   }
   const page = pageAt(knownBreaks, view.state.selection.main.head);
-  pageIndicator.textContent = `p. ${page} / ${knownPages}`;
+  pageIndicator.textContent = `p. ${page} / ${knownPages ?? "?"}`;
 }
 
 function togglePagination() {
@@ -1334,7 +1384,8 @@ function togglePagination() {
     schedulePagination(50);
   } else {
     knownBreaks = [];
-    knownPages = 1;
+    knownPages = null;
+    firstMeasureFailures = 0;
     if (view.state.field(pageBreaksField, false) !== undefined) {
       view.dispatch({ effects: setPageBreaks.of([]) });
     }
@@ -1374,14 +1425,37 @@ async function runPagination() {
       { title: "", author: "", date: "" },
       "#pagination-measure",
     );
+    // paginationPreviewer is always null here — every path out of this
+    // function (including an early return above) goes through the finally
+    // block below, which tears the previous instance down and resets it.
+    // measureRoot is therefore already empty; this is just insurance.
     measureRoot.innerHTML = "";
     const source = document.createElement("div");
     source.innerHTML = html;
+    // Tracked immediately (not just after a successful preview) so the
+    // finally block below can always tear this instance down properly, even
+    // if preview() itself is what throws.
     const previewer = new Previewer();
+    paginationPreviewer = previewer;
+    // Collect the exact break token Paged.js cut each page at, keyed by the
+    // page it ends (0-based) — afterPageLayout can re-fire for the same page
+    // during Paged.js's own overflow retries, so last write wins, same as
+    // Paged.js's own resolution. extractPageBreaks uses these for a
+    // pixel-exact divider when the straddling block turns out to be plain
+    // text, falling back to its proportional approximation otherwise.
+    const exactBreaks = new Map<number, BreakToken | undefined>();
+    previewer.chunker.hooks.afterPageLayout.register((_el, page, token) => {
+      exactBreaks.set(page.position, token);
+    });
     await previewer.preview(source, [{ "monoleaf-measure": css }], measureRoot);
-    const { breaks, pages } = extractPageBreaks(measureRoot, view.state);
+    const { breaks, pages } = extractPageBreaks(
+      measureRoot,
+      view.state,
+      exactBreaks,
+    );
     knownBreaks = breaks;
     knownPages = pages;
+    firstMeasureFailures = 0;
     lastMeasureKey = key;
     view.dispatch({ effects: setPageBreaks.of(breaks) });
     refreshPageIndicator();
@@ -1396,12 +1470,21 @@ async function runPagination() {
     if (isPagedjsInternalError(err)) {
       view.dispatch({ effects: setPageBreaks.of(knownBreaks) });
       refreshPageIndicator();
+      // No good count to fall back on yet: try again (the finally block
+      // schedules the queued run), a bounded number of times.
+      if (knownPages === null) {
+        firstMeasureFailures++;
+        if (firstMeasureFailures < FIRST_MEASURE_ATTEMPTS) {
+          paginationQueued = true;
+        }
+      }
     } else {
       reportError(`Pagination: ${String(err)}`);
       pageIndicator.textContent = "";
     }
   } finally {
-    measureRoot.innerHTML = "";
+    teardownPreview(measureRoot, paginationPreviewer);
+    paginationPreviewer = null;
     document
       .querySelectorAll("style[data-pagedjs-inserted-styles]")
       .forEach((s) => s.remove());
@@ -1711,7 +1794,8 @@ function loadIntoEditor(
   suggestedName = ref === null ? suggested : null;
   dirty = false;
   knownBreaks = [];
-  knownPages = 1;
+  knownPages = null;
+  firstMeasureFailures = 0;
   // setState wiped the (per-state) page-break field; force a real re-measure
   // rather than let a matching cache key short-circuit it to an empty field.
   lastMeasureKey = "";
