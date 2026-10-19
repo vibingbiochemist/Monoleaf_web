@@ -113,6 +113,7 @@ import {
   storeRemoteImagePreference,
 } from "./remoteimages";
 import { Previewer } from "pagedjs";
+import { fitImagesToPage, IMAGE_PAGE_SLACK_PX } from "./imagefit";
 import {
   BreakToken,
   extractPageBreaks,
@@ -769,6 +770,7 @@ let pageMarginPx = { top: 75.6, right: 75.6, bottom: 75.6, left: 75.6 }; // 20mm
 // scaled by editing the actual rule's literal values through the CSSOM.
 let liveContentRule: CSSStyleRule | null = null;
 let editorFontRule: CSSStyleRule | null = null;
+let liveImageRule: CSSStyleRule | null = null;
 let currentFontId = DEFAULT_FONT_ID;
 
 function findRule(selector: string): CSSStyleRule | null {
@@ -821,9 +823,35 @@ function applyPageVars() {
       "font-size",
       `${(PRINT_FONT_PX * z).toFixed(2)}px`,
     );
+    // Images are capped to the page body here exactly as the print sheet
+    // caps them (buildPrintCss, export.ts): an image cannot cross a page, so
+    // both views scale a tall one down to a page — otherwise the editor shows
+    // a photo spanning several pages that the PDF fits onto one. The slack
+    // (IMAGE_PAGE_SLACK_PX in pageBodyHeightPx) scales with the page.
+    if (liveImageRule?.parentStyleSheet == null) {
+      liveImageRule = findRule(".cm-live-image");
+    }
+    liveImageRule?.style.setProperty(
+      "max-height",
+      `${pageBodyHeightPx() * z}px`,
+    );
   } catch (err) {
     console.error("[monoleaf] applyPageVars failed:", err);
   }
+}
+
+/** The tallest an image may be, in unzoomed px: the page body (paper minus
+ * top and bottom margins) less the slack the print sheet keeps for a lead-in
+ * line or caption (IMAGE_PAGE_SLACK_PT, imagefit.ts). Mirrors buildPrintCss. */
+function pageBodyHeightPx(): number {
+  return (
+    paperDims.h - pageMarginPx.top - pageMarginPx.bottom - IMAGE_PAGE_SLACK_PX
+  );
+}
+
+/** Width of the page body in px, for percentage image widths. */
+function pageBodyWidthPx(): number {
+  return paperDims.w - pageMarginPx.left - pageMarginPx.right;
 }
 
 function updatePageMetrics() {
@@ -1108,10 +1136,16 @@ async function exportPdf() {
   printPreview.hidden = false;
   const source = document.createElement("div");
   source.innerHTML = html;
-  const previewer = new Previewer();
-  printPreviewer = previewer;
+  // Set before the image fitting below: here a remote image can make that
+  // wait last seconds, and Close or a second Export must not run meanwhile.
   printPreviewRendering = true;
   try {
+    // Explicitly sized images: shrink the width where the page-body height
+    // cap would otherwise leave a letterboxed picture in a wide box
+    // (imagefit.ts).
+    await fitImagesToPage(source, pageBodyHeightPx(), pageBodyWidthPx());
+    const previewer = new Previewer();
+    printPreviewer = previewer;
     await previewer.preview(source, [{ "monoleaf-print": css }], printRoot);
     printPreviewRendering = false;
     printRoot.querySelectorAll("a[href]").forEach((a) => {
@@ -1432,6 +1466,8 @@ async function runPagination() {
     measureRoot.innerHTML = "";
     const source = document.createElement("div");
     source.innerHTML = html;
+    // Same image fitting as exportPdf, so the measured breaks match the PDF.
+    await fitImagesToPage(source, pageBodyHeightPx(), pageBodyWidthPx());
     // Tracked immediately (not just after a successful preview) so the
     // finally block below can always tear this instance down properly, even
     // if preview() itself is what throws.
