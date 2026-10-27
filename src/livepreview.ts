@@ -5,7 +5,11 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { isRemoteUrl, remoteImagesAllowed } from "./remoteimages";
-import { fittedImageWidth, requestedImageWidth } from "./imagefit";
+import {
+  fittedImageWidth,
+  imageWidthCss,
+  requestedImageWidth,
+} from "./imagefit";
 import { imageReferenceAt } from "./imageref";
 import {
   AmbiguousImageError,
@@ -133,6 +137,14 @@ function isDataUrl(url: string): boolean {
   return /^data:/i.test(url.trim());
 }
 
+/** The page body width in px (--page-body-w, set by applyPageVars): the
+ * widest an image gets, as in the PDF, even on a wider page-layout-off line.
+ * Infinity when unset (tests), so it never caps anything there. */
+function pageBodyWidth(img: HTMLElement): number {
+  const w = parseFloat(getComputedStyle(img).getPropertyValue("--page-body-w"));
+  return Number.isFinite(w) ? w : Infinity;
+}
+
 class ImageWidget extends WidgetType {
   /** Whether this is a remote image the reader has not opted into loading —
    * captured at construction, not re-read live in toDOM/eq, because eq()
@@ -211,9 +223,7 @@ class ImageWidget extends WidgetType {
     img.alt = this.alt;
     if (this.alt !== "") img.title = this.alt;
     if (this.width !== "") {
-      img.style.width = /^\d+$/.test(this.width)
-        ? `${this.width}px`
-        : this.width; // e.g. "100%"
+      img.style.width = imageWidthCss(this.width);
     }
     img.addEventListener("load", () => {
       // An explicit width can ask for more height than the page body allows
@@ -225,7 +235,10 @@ class ImageWidget extends WidgetType {
         const cap = parseFloat(getComputedStyle(img).maxHeight);
         const requested = requestedImageWidth(
           this.width,
-          wrap.parentElement?.clientWidth ?? img.clientWidth,
+          Math.min(
+            wrap.parentElement?.clientWidth ?? img.clientWidth,
+            pageBodyWidth(img),
+          ),
         );
         if (Number.isFinite(cap) && Number.isFinite(requested)) {
           const fitted = fittedImageWidth(
@@ -253,9 +266,11 @@ class ImageWidget extends WidgetType {
       e.stopPropagation();
       const startX = e.clientX;
       const startW = img.offsetWidth;
-      const maxW =
+      const maxW = Math.min(
         (wrap.parentElement?.clientWidth ?? 800) -
-        (wrap.offsetLeft - (wrap.parentElement?.offsetLeft ?? 0));
+          (wrap.offsetLeft - (wrap.parentElement?.offsetLeft ?? 0)),
+        pageBodyWidth(img),
+      );
       let committed = startW;
       const onMove = (ev: MouseEvent) => {
         committed = Math.max(
